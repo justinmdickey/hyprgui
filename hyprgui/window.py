@@ -70,6 +70,13 @@ class HyprguiWindow(Adw.ApplicationWindow):
 
     def _build_ui(self) -> None:
         """Build sidebar + content layout from the settings registry."""
+        # Minimal CSS overrides
+        css = Gtk.CssProvider()
+        css.load_from_string(
+            "row.sidebar-separator { min-height: 0; padding: 0; margin: 6px 0; }")
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
         # Collect settings by page, then group (preserving insertion order)
         pages: dict[str, OrderedDict[str, list[SettingDef]]] = OrderedDict()
         for sdef in SETTINGS:
@@ -86,6 +93,8 @@ class HyprguiWindow(Adw.ApplicationWindow):
 
         self._sidebar_rows: list[Gtk.ListBoxRow] = []
         self._page_labels: dict[str, list[str]] = {}
+        self._hyprland_child_rows: list[Gtk.ListBoxRow] = []
+        self._hyprland_expanded: bool = True
 
         # --- System pages (Wi-Fi, Bluetooth, Sound, Display) ---
         self._load_system_pages()
@@ -102,13 +111,27 @@ class HyprguiWindow(Adw.ApplicationWindow):
 
         # Separator between system and Hyprland pages
         if self._system_pages and pages:
-            sep = Gtk.ListBoxRow(selectable=False, activatable=False)
-            sep.set_child(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
-            sep.set_sensitive(False)
-            sidebar_listbox.append(sep)
+            sep_row = Gtk.ListBoxRow(selectable=False, activatable=False)
+            sep_row.set_sensitive(False)
+            sep_row.set_size_request(-1, 1)
+            sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+            sep_row.set_child(sep)
+            sep_row.add_css_class("sidebar-separator")
+            sidebar_listbox.append(sep_row)
 
-        # --- Hyprland registry pages ---
-        first_page_key = None
+        # --- Hyprland registry pages (expander in sidebar, flat in stack) ---
+        if pages:
+            # Parent expander row (not selectable — only toggles expand)
+            expander_row = Gtk.ListBoxRow(selectable=False)
+            expander_row.page_key = "_hyprland_expander"
+            exp_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            self._expander_icon = Gtk.Image(icon_name="pan-down-symbolic")
+            exp_box.append(self._expander_icon)
+            exp_box.append(Gtk.Label(label="Hyprland", xalign=0, hexpand=True))
+            expander_row.set_child(exp_box)
+            sidebar_listbox.append(expander_row)
+            self._hyprland_expander_row = expander_row
+
         for page_key, groups in pages.items():
             pref_page = Adw.PreferencesPage()
             for group_title, sdefs in groups.items():
@@ -121,33 +144,34 @@ class HyprguiWindow(Adw.ApplicationWindow):
                 pref_page.add(group)
             self._stack.add_named(pref_page, page_key)
 
-            labels = []
-            for sdefs in groups.values():
-                labels.extend(s.label.lower() for s in sdefs)
-            self._page_labels[page_key] = labels
+            page_labels = [s.label.lower() for sdefs in groups.values() for s in sdefs]
+            self._page_labels[page_key] = page_labels
 
-            row = self._make_sidebar_row(
+            # Indented child row in sidebar
+            child_row = self._make_sidebar_row(
                 page_key,
                 PAGE_TITLES.get(page_key, page_key),
                 PAGE_ICONS.get(page_key, "preferences-system-symbolic"),
+                indent=16,
             )
-            sidebar_listbox.append(row)
-            self._sidebar_rows.append(row)
-            if first_page_key is None:
-                first_page_key = page_key
+            sidebar_listbox.append(child_row)
+            self._sidebar_rows.append(child_row)
+            self._hyprland_child_rows.append(child_row)
 
         # Hidden search results page
         self._search_page = Adw.PreferencesPage()
         self._stack.add_named(self._search_page, "_search")
 
-        # Pick initial page: first system page if any, else first registry page
+        # Pick initial page: first system page if any, else first hyprland page
         if self._system_pages:
             initial_key = next(iter(self._system_pages))
+        elif pages:
+            initial_key = next(iter(pages))
         else:
-            initial_key = first_page_key or ""
+            initial_key = ""
 
         # Content header bar with save button
-        self._content_title = Adw.WindowTitle(
+        self._window_title = Adw.WindowTitle(
             title=self._resolve_page_title(initial_key))
 
         self._save_btn = Gtk.Button(label="Save")
@@ -159,12 +183,12 @@ class HyprguiWindow(Adw.ApplicationWindow):
         reset_btn.add_css_class("flat")
         reset_btn.connect("clicked", self._on_reset_clicked)
 
-        content_header = Adw.HeaderBar(title_widget=self._content_title)
-        content_header.pack_end(self._save_btn)
-        content_header.pack_start(reset_btn)
+        self._content_header = Adw.HeaderBar(title_widget=self._window_title)
+        self._content_header.pack_end(self._save_btn)
+        self._content_header.pack_start(reset_btn)
 
         content_toolbar = Adw.ToolbarView()
-        content_toolbar.add_top_bar(content_header)
+        content_toolbar.add_top_bar(self._content_header)
         content_toolbar.set_content(self._stack)
 
         content_page = Adw.NavigationPage(
@@ -173,6 +197,7 @@ class HyprguiWindow(Adw.ApplicationWindow):
         )
 
         sidebar_listbox.connect("row-selected", self._on_sidebar_row_selected)
+        sidebar_listbox.connect("row-activated", self._on_sidebar_row_activated)
 
         sidebar_scroll = Gtk.ScrolledWindow(
             hscrollbar_policy=Gtk.PolicyType.NEVER,
@@ -274,10 +299,13 @@ class HyprguiWindow(Adw.ApplicationWindow):
 
     def _make_sidebar_row(
         self, page_key: str, title: str, icon_name: str,
+        indent: int = 0,
     ) -> Gtk.ListBoxRow:
         row = Gtk.ListBoxRow()
         row.page_key = page_key
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        if indent:
+            box.set_margin_start(indent)
         box.append(Gtk.Image(icon_name=icon_name))
         box.append(Gtk.Label(label=title, xalign=0, hexpand=True))
         row.set_child(box)
@@ -291,6 +319,8 @@ class HyprguiWindow(Adw.ApplicationWindow):
     def _on_sidebar_row_selected(self, listbox, row):
         if row is None or not hasattr(row, "page_key"):
             return
+        if row.page_key == "_hyprland_expander":
+            return
 
         # Deactivate previous system page
         if self._active_system_page is not None:
@@ -301,13 +331,24 @@ class HyprguiWindow(Adw.ApplicationWindow):
         if self._in_search:
             self._search_entry.set_text("")
         self._stack.set_visible_child_name(row.page_key)
-        self._content_title.set_title(self._resolve_page_title(row.page_key))
+        self._window_title.set_title(self._resolve_page_title(row.page_key))
         self._split_view.set_show_content(True)
 
         # Activate new system page
         if row.page_key in self._system_pages:
             self._active_system_page = self._system_pages[row.page_key]
             self._active_system_page.activate()
+
+    def _on_sidebar_row_activated(self, listbox, row):
+        if hasattr(row, "page_key") and row.page_key == "_hyprland_expander":
+            self._toggle_hyprland_expander()
+
+    def _toggle_hyprland_expander(self):
+        self._hyprland_expanded = not self._hyprland_expanded
+        icon = "pan-down-symbolic" if self._hyprland_expanded else "pan-end-symbolic"
+        self._expander_icon.set_from_icon_name(icon)
+        for child_row in self._hyprland_child_rows:
+            child_row.set_visible(self._hyprland_expanded)
 
     def _on_search_changed(self, entry: Gtk.SearchEntry) -> None:
         query = entry.get_text().strip().lower()
@@ -346,14 +387,22 @@ class HyprguiWindow(Adw.ApplicationWindow):
             self._search_groups.append(search_group)
 
         self._stack.set_visible_child_name("_search")
-        self._content_title.set_title("Search Results")
+        self._window_title.set_title("Search Results")
 
-        # Filter sidebar rows too
+        # Filter sidebar rows — for Hyprland child rows, also control parent
+        any_hyprland_visible = False
         for srow in self._sidebar_rows:
             page_key = srow.page_key
             title = self._resolve_page_title(page_key).lower()
             labels = self._page_labels.get(page_key, [])
-            srow.set_visible(query in title or any(query in l for l in labels))
+            visible = query in title or any(query in l for l in labels)
+            srow.set_visible(visible)
+            if visible and srow in self._hyprland_child_rows:
+                any_hyprland_visible = True
+
+        # Show/hide the Hyprland expander parent based on child visibility
+        if hasattr(self, "_hyprland_expander_row"):
+            self._hyprland_expander_row.set_visible(any_hyprland_visible)
 
     def _end_search(self) -> None:
         if not self._in_search:
@@ -373,11 +422,13 @@ class HyprguiWindow(Adw.ApplicationWindow):
         # Restore sidebar visibility
         for srow in self._sidebar_rows:
             srow.set_visible(True)
+        if hasattr(self, "_hyprland_expander_row"):
+            self._hyprland_expander_row.set_visible(True)
 
         # Switch back to previously selected page
         if self._active_page_key:
             self._stack.set_visible_child_name(self._active_page_key)
-            self._content_title.set_title(
+            self._window_title.set_title(
                 self._resolve_page_title(self._active_page_key))
 
     def _restore_rows(self) -> None:
