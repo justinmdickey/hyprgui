@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Hyprgui
+Comment=Settings app for Hyprland
+Exec=hyprgui
+Icon=preferences-system-symbolic
+Categories=Settings;DesktopSettings;
+Keywords=hyprland;settings;configuration;

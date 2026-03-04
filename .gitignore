@@ -1,0 +1,8 @@
+# Python
+__pycache__/
+
+# makepkg
+src/
+pkg/
+*.pkg.tar.*
+hyprgui-git/
