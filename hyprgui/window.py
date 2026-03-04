@@ -1,4 +1,4 @@
-"""Dynamic preferences window — generates UI from the settings registry."""
+"""Dynamic settings window — generates UI from the settings registry."""
 
 from __future__ import annotations
 
@@ -22,13 +22,12 @@ from hyprgui.settings_registry import (
 from hyprgui.widgets.color_row import create_color_row, rgba_to_hex
 
 
-class HyprguiWindow(Adw.PreferencesWindow):
-    """Main preferences window — built dynamically from SETTINGS registry."""
+class HyprguiWindow(Adw.ApplicationWindow):
+    """Main settings window with sidebar navigation."""
 
     def __init__(self, app: Adw.Application, **kwargs):
         super().__init__(application=app, title="Hyprgui", **kwargs)
-        self.set_default_size(680, 780)
-        self.set_search_enabled(False)
+        self.set_default_size(900, 700)
 
         # Current UI values: key -> python value
         self._values: dict[str, object] = {}
@@ -42,85 +41,113 @@ class HyprguiWindow(Adw.PreferencesWindow):
     # -- UI construction ----------------------------------------------------
 
     def _build_ui(self) -> None:
-        """Build pages, groups, and rows from the settings registry."""
+        """Build sidebar + content layout from the settings registry."""
         # Collect settings by page, then group (preserving insertion order)
         pages: dict[str, OrderedDict[str, list[SettingDef]]] = OrderedDict()
         for sdef in SETTINGS:
             page_groups = pages.setdefault(sdef.page, OrderedDict())
             page_groups.setdefault(sdef.group, []).append(sdef)
 
-        for page_key, groups in pages.items():
-            page = Adw.PreferencesPage(
-                title=PAGE_TITLES.get(page_key, page_key),
-                icon_name=PAGE_ICONS.get(page_key, "preferences-system-symbolic"),
-            )
+        # -- Content area: stack of PreferencesPages -----------------------
+        self._stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
 
+        for page_key, groups in pages.items():
+            pref_page = Adw.PreferencesPage()
             for group_title, sdefs in groups.items():
                 group = Adw.PreferencesGroup(title=group_title)
                 for sdef in sdefs:
                     row = self._create_row(sdef)
                     if row is not None:
                         group.add(row)
-                page.add(group)
+                pref_page.add(group)
+            self._stack.add_named(pref_page, page_key)
 
-            self.add(page)
+        # Content header bar with save button
+        self._content_title = Adw.WindowTitle(title=PAGE_TITLES.get(
+            next(iter(pages)), ""))
 
-        # Save button in the header bar
         save_btn = Gtk.Button(label="Save")
         save_btn.add_css_class("suggested-action")
         save_btn.connect("clicked", self._on_save_clicked)
 
-        header = self.get_content().get_first_child()
-        if hasattr(self, "add_action"):
-            pass
-        # Add save button to the header via toolbar
-        self._add_save_button(save_btn)
+        content_header = Adw.HeaderBar(title_widget=self._content_title)
+        content_header.pack_end(save_btn)
 
-    def _add_save_button(self, button: Gtk.Button) -> None:
-        """Add a save button to the window's header bar."""
-        # AdwPreferencesWindow has a built-in header; we use a custom approach
-        # by adding a toolbar-style button into the window's title bar
-        bar = Adw.HeaderBar()
-        bar.set_show_title(False)
-        bar.pack_end(button)
+        content_toolbar = Adw.ToolbarView()
+        content_toolbar.add_top_bar(content_header)
+        content_toolbar.set_content(self._stack)
 
-        # Insert at top of the window content
-        toolbar_view = Adw.ToolbarView()
-        toolbar_view.add_top_bar(bar)
+        content_page = Adw.NavigationPage(
+            child=content_toolbar,
+            title=PAGE_TITLES.get(next(iter(pages)), ""),
+        )
 
-        # We need to reparent the content. Adw.PreferencesWindow doesn't
-        # expose a clean way to add header bar buttons, so we use the
-        # set_content approach via the built-in toolbar.
-        # Actually, AdwPreferencesWindow already has a header bar.
-        # Let's just use a floating action approach with a toast overlay.
-        # Simpler: use the window's built-in header bar end widget.
+        # -- Sidebar -------------------------------------------------------
+        sidebar_listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        sidebar_listbox.add_css_class("navigation-sidebar")
 
-        # AdwPreferencesWindow doesn't expose its header bar directly,
-        # but we can walk the widget tree to find it.
-        self._save_button = button
-        self._inject_header_button(button)
+        first_row = None
+        for page_key in pages:
+            row = Gtk.ListBoxRow()
+            row.page_key = page_key
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            box.append(Gtk.Image(icon_name=PAGE_ICONS.get(
+                page_key, "preferences-system-symbolic")))
+            box.append(Gtk.Label(
+                label=PAGE_TITLES.get(page_key, page_key),
+                xalign=0, hexpand=True,
+            ))
+            row.set_child(box)
+            sidebar_listbox.append(row)
+            if first_row is None:
+                first_row = row
 
-    def _inject_header_button(self, button: Gtk.Button) -> None:
-        """Walk widget tree to find the header bar and inject our button."""
-        def _find_header(widget):
-            if isinstance(widget, Adw.HeaderBar):
-                return widget
-            child = widget.get_first_child() if hasattr(widget, "get_first_child") else None
-            while child:
-                result = _find_header(child)
-                if result:
-                    return result
-                child = child.get_next_sibling()
-            return None
+        sidebar_listbox.connect("row-selected", self._on_sidebar_row_selected)
 
-        # Defer to after the window is mapped
-        def _on_map(_widget):
-            hb = _find_header(self)
-            if hb:
-                hb.pack_end(button)
-            self.disconnect(handler_id)
+        sidebar_scroll = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            vexpand=True,
+        )
+        sidebar_scroll.set_child(sidebar_listbox)
 
-        handler_id = self.connect("map", _on_map)
+        sidebar_header = Adw.HeaderBar(
+            title_widget=Adw.WindowTitle(title="Hyprgui"),
+        )
+
+        sidebar_toolbar = Adw.ToolbarView()
+        sidebar_toolbar.add_top_bar(sidebar_header)
+        sidebar_toolbar.set_content(sidebar_scroll)
+
+        sidebar_page = Adw.NavigationPage(
+            child=sidebar_toolbar, title="Hyprgui",
+        )
+
+        # -- Split view ----------------------------------------------------
+        self._split_view = Adw.NavigationSplitView(
+            min_sidebar_width=220,
+            max_sidebar_width=260,
+            sidebar=sidebar_page,
+            content=content_page,
+        )
+
+        # -- Toast overlay wrapping everything -----------------------------
+        self._toast_overlay = Adw.ToastOverlay(child=self._split_view)
+        self.set_content(self._toast_overlay)
+
+        # Select first sidebar row
+        if first_row is not None:
+            sidebar_listbox.select_row(first_row)
+
+    def _on_sidebar_row_selected(self, listbox, row):
+        if row is None:
+            return
+        self._stack.set_visible_child_name(row.page_key)
+        self._content_title.set_title(PAGE_TITLES.get(row.page_key, row.page_key))
+        self._split_view.set_show_content(True)
+
+    def add_toast(self, toast):
+        """Forward toast calls to the internal overlay."""
+        self._toast_overlay.add_toast(toast)
 
     # -- Row factory --------------------------------------------------------
 
