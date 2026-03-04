@@ -387,17 +387,6 @@ SETTINGS: list[SettingDef] = [
         default=15,
     ),
 
-    # ── Gaps & Borders: Layout ────────────────────────────────────────
-    SettingDef(
-        key="general:layout",
-        label="Layout",
-        setting_type=SettingType.ENUM,
-        page="gaps_borders",
-        group="Layout",
-        enum_options=("dwindle", "master"),
-        default="dwindle",
-    ),
-
     # ── Gaps & Borders: General ───────────────────────────────────────
     SettingDef(
         key="general:allow_tearing",
@@ -514,6 +503,17 @@ SETTINGS: list[SettingDef] = [
         max_val=3.0,
         step=0.1,
         default=1.0,
+    ),
+
+    # ── Layouts: Layout ──────────────────────────────────────────────
+    SettingDef(
+        key="general:layout",
+        label="Layout",
+        setting_type=SettingType.ENUM,
+        page="layouts",
+        group="Layout",
+        enum_options=("dwindle", "master", "monocle", "scrolling"),
+        default="dwindle",
     ),
 
     # ── Layouts: Dwindle ──────────────────────────────────────────────

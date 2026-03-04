@@ -178,14 +178,19 @@ class HyprguiWindow(Adw.ApplicationWindow):
         self._save_btn.add_css_class("suggested-action")
         self._save_btn.connect("clicked", self._on_save_clicked)
 
-        reset_btn = Gtk.Button(icon_name="edit-clear-all-symbolic",
-                               tooltip_text="Reset all settings")
-        reset_btn.add_css_class("flat")
-        reset_btn.connect("clicked", self._on_reset_clicked)
+        self._reset_btn = Gtk.Button(icon_name="edit-clear-all-symbolic",
+                                      tooltip_text="Reset all settings")
+        self._reset_btn.add_css_class("flat")
+        self._reset_btn.connect("clicked", self._on_reset_clicked)
+
+        # Hide save/reset on system pages (they only apply to Hyprland config)
+        is_hyprland = initial_key not in self._system_pages
+        self._save_btn.set_visible(is_hyprland)
+        self._reset_btn.set_visible(is_hyprland)
 
         self._content_header = Adw.HeaderBar(title_widget=self._window_title)
         self._content_header.pack_end(self._save_btn)
-        self._content_header.pack_start(reset_btn)
+        self._content_header.pack_start(self._reset_btn)
 
         content_toolbar = Adw.ToolbarView()
         content_toolbar.add_top_bar(self._content_header)
@@ -332,6 +337,11 @@ class HyprguiWindow(Adw.ApplicationWindow):
             self._search_entry.set_text("")
         self._stack.set_visible_child_name(row.page_key)
         self._window_title.set_title(self._resolve_page_title(row.page_key))
+
+        # Show save/reset only on Hyprland pages
+        is_hyprland = row.page_key not in self._system_pages
+        self._save_btn.set_visible(is_hyprland)
+        self._reset_btn.set_visible(is_hyprland)
         self._split_view.set_show_content(True)
 
         # Activate new system page
