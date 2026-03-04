@@ -75,7 +75,21 @@ def parse_option_value(sdef: SettingDef, data: dict | None) -> object:
             return str(data.get("str", sdef.default))
 
         if sdef.setting_type == SettingType.ENUM:
-            return str(data.get("str", sdef.default))
+            raw = str(data.get("str", sdef.default)).strip()
+            if sdef.enum_values:
+                # Map raw hyprctl value back to display label
+                # Try int field first (for numeric enums like follow_mouse)
+                int_raw = data.get("int")
+                if int_raw is not None:
+                    int_str = str(int(int_raw))
+                    if int_str in sdef.enum_values:
+                        idx = sdef.enum_values.index(int_str)
+                        return sdef.enum_options[idx]
+                if raw in sdef.enum_values:
+                    idx = sdef.enum_values.index(raw)
+                    return sdef.enum_options[idx]
+                return sdef.default
+            return raw
 
     except (ValueError, TypeError, KeyError):
         pass
@@ -98,5 +112,12 @@ def format_value(sdef: SettingDef, value: object) -> str:
         # value is RRGGBBAA hex string, hyprctl wants "rgba(RRGGBBAA)"
         return f"rgba({value})"
 
-    # STRING, ENUM
+    if sdef.setting_type == SettingType.ENUM and sdef.enum_values:
+        # Map display label back to hyprctl value
+        label = str(value)
+        if label in sdef.enum_options:
+            idx = sdef.enum_options.index(label)
+            return sdef.enum_values[idx]
+
+    # STRING, ENUM (without enum_values)
     return str(value)
