@@ -18,6 +18,13 @@ hyprgui/
 ├── settings_registry.py  # Declarative SettingDef list (extensibility core)
 ├── hyprctl.py            # Read/write via hyprctl subprocess
 ├── config_manager.py     # Write hyprgui.conf, manage source line
+├── dbus_helpers.py       # Shared Gio.DBusProxy utilities
+├── pages/
+│   ├── base.py           # BasePage ABC (build/activate/deactivate/dispose)
+│   ├── wifi.py           # NetworkManager D-Bus
+│   ├── bluetooth.py      # BlueZ D-Bus
+│   ├── sound.py          # wpctl/pactl subprocess
+│   └── display.py        # hyprctl monitors
 └── widgets/
     └── color_row.py      # AdwActionRow + GtkColorDialogButton helper
 ```
@@ -27,6 +34,7 @@ hyprgui/
 - **Registry-driven**: all settings defined as `SettingDef` entries in `settings_registry.py`. UI, live preview, and config persistence are all derived from this list.
 - **Adding a setting**: append one `SettingDef` to `SETTINGS` — everything else is automatic.
 - **Adding a page**: add entry to `PAGE_TITLES`/`PAGE_ICONS` dicts, reference the new page name in settings.
+- **System pages**: Wi-Fi, Bluetooth, Sound, Display are `BasePage` subclasses in `pages/`, using D-Bus (`dbus_helpers.py`) or subprocess backends. They work independently of Hyprland.
 
 ## Widget Mapping
 
@@ -57,6 +65,10 @@ hyprgui/
 - Config/keyword format: `rgba(RRGGBBAA)`
 - Internal representation: `RRGGBBAA` hex string
 
-## Current MVP Settings (22 total)
+## Current Settings (67 total)
 
-Decoration (blur, shadow, rounding, opacity, dim), Gaps & Borders (gaps_in/out, border_size, border colors, layout), Animations (enabled toggle), Miscellaneous (cursor zoom/hyprcursor, font_family, disable_logo, focus_on_activate).
+Decoration (24), Gaps & Borders (10), Animations (1), Input (9), Layouts (11), Miscellaneous (12).
+
+## System Pages
+
+Wi-Fi (NetworkManager D-Bus), Bluetooth (BlueZ D-Bus), Sound (wpctl/pactl subprocess), Display (hyprctl monitors).
