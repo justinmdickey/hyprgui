@@ -2,7 +2,7 @@
 
 A GTK4 + libadwaita settings app for [Hyprland](https://hyprland.org/), written in Python with PyGObject.
 
-<!-- TODO: Add screenshot -->
+![Hyprgui screenshot](assets/screenshot.png)
 
 ## Features
 
