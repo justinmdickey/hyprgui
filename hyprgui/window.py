@@ -46,7 +46,9 @@ class HyprguiWindow(Adw.ApplicationWindow):
         self._values: dict[str, object] = {}
         # Widget references for potential future use
         self._widgets: dict[str, Gtk.Widget] = {}
-        self._dirty = False
+        # Per-setting modification tracking (replaces global _dirty bool)
+        self._modified_keys: set[str] = set()
+        self._managed_keys: set[str] = set()  # seeded from existing hyprgui.conf
         self._loading = False
 
         # Per-row search: (sdef, row_widget, original_parent_group)
@@ -65,6 +67,16 @@ class HyprguiWindow(Adw.ApplicationWindow):
         self._build_ui()
         if self._has_hyprctl:
             self._load_current_values()
+            self._seed_managed_keys()
+
+    @property
+    def _dirty(self) -> bool:
+        return bool(self._modified_keys)
+
+    def _seed_managed_keys(self) -> None:
+        """Load the set of keys previously saved in hyprgui.conf."""
+        from hyprgui.config_manager import parse_hyprgui_conf
+        self._managed_keys = parse_hyprgui_conf()
 
     # -- UI construction ----------------------------------------------------
 
@@ -141,10 +153,15 @@ class HyprguiWindow(Adw.ApplicationWindow):
                     if row is not None:
                         group.add(row)
                         self._row_info.append((sdef, row, group))
+                # Inject cursor theme/size rows into the Cursor group
+                if page_key == "misc" and group_title == "Cursor":
+                    self._build_cursor_theme_rows(group)
                 pref_page.add(group)
             self._stack.add_named(pref_page, page_key)
 
             page_labels = [s.label.lower() for sdefs in groups.values() for s in sdefs]
+            if page_key == "misc":
+                page_labels.extend(["cursor theme", "cursor size"])
             self._page_labels[page_key] = page_labels
 
             # Indented child row in sidebar
@@ -551,6 +568,62 @@ class HyprguiWindow(Adw.ApplicationWindow):
         row.connect("notify::selected", _on_notify)
         return row
 
+    # -- Cursor theme / size (not registry-driven) --------------------------
+
+    def _build_cursor_theme_rows(self, group: Adw.PreferencesGroup) -> None:
+        """Add cursor theme and size rows to the Cursor group."""
+        themes = hyprctl.find_cursor_themes()
+        cur_theme, cur_size = hyprctl.get_current_cursor()
+
+        # -- Theme ComboRow --
+        theme_row = Adw.ComboRow(title="Cursor Theme")
+        model = Gtk.StringList()
+        selected_idx = 0
+        for i, name in enumerate(themes):
+            model.append(name)
+            if name == cur_theme:
+                selected_idx = i
+        theme_row.set_model(model)
+        theme_row.set_selected(selected_idx)
+
+        self._cursor_themes = themes
+        self._cursor_theme_row = theme_row
+        self._cursor_theme = cur_theme
+
+        def _on_theme_changed(row, _pspec):
+            if self._loading:
+                return
+            idx = row.get_selected()
+            if 0 <= idx < len(self._cursor_themes):
+                self._cursor_theme = self._cursor_themes[idx]
+                self._modified_keys.add("_cursor_theme")
+                self._update_dirty_indicator()
+                hyprctl.set_cursor(self._cursor_theme, self._cursor_size)
+
+        theme_row.connect("notify::selected", _on_theme_changed)
+        group.add(theme_row)
+
+        # -- Size SpinRow --
+        size_adj = Gtk.Adjustment(
+            value=float(cur_size), lower=8, upper=96,
+            step_increment=4, page_increment=8,
+        )
+        size_row = Adw.SpinRow(title="Cursor Size", adjustment=size_adj, digits=0)
+
+        self._cursor_size_row = size_row
+        self._cursor_size = cur_size
+
+        def _on_size_changed(row, _pspec):
+            if self._loading:
+                return
+            self._cursor_size = int(row.get_value())
+            self._modified_keys.add("_cursor_size")
+            self._update_dirty_indicator()
+            hyprctl.set_cursor(self._cursor_theme, self._cursor_size)
+
+        size_row.connect("notify::value", _on_size_changed)
+        group.add(size_row)
+
     # -- Load current values from Hyprland ----------------------------------
 
     def _load_current_values(self) -> None:
@@ -638,7 +711,7 @@ class HyprguiWindow(Adw.ApplicationWindow):
         """Send the value to Hyprland immediately for live preview."""
         if self._loading:
             return
-        self._dirty = True
+        self._modified_keys.add(sdef.key)
         self._update_dirty_indicator()
         formatted = hyprctl.format_value(sdef, value)
         hyprctl.set_keyword(sdef.key, formatted)
@@ -647,8 +720,17 @@ class HyprguiWindow(Adw.ApplicationWindow):
 
     def _on_save_clicked(self, _button: Gtk.Button) -> None:
         from hyprgui.config_manager import write_hyprgui_conf
-        write_hyprgui_conf(self._values)
-        self._dirty = False
+        all_managed = self._managed_keys | self._modified_keys
+        cursor_theme = getattr(self, "_cursor_theme", "")
+        cursor_size = getattr(self, "_cursor_size", 0)
+        write_hyprgui_conf(
+            self._values,
+            managed_keys=all_managed,
+            cursor_theme=cursor_theme if "_cursor_theme" in all_managed else "",
+            cursor_size=cursor_size if "_cursor_size" in all_managed else 0,
+        )
+        self._managed_keys = all_managed
+        self._modified_keys.clear()
         self._update_dirty_indicator()
         toast = Adw.Toast(title="Settings saved to hyprgui.conf")
         self.add_toast(toast)
@@ -672,7 +754,8 @@ class HyprguiWindow(Adw.ApplicationWindow):
         from hyprgui.config_manager import reset_hyprgui_conf
         reset_hyprgui_conf()
         hyprctl.reload_config()
-        self._dirty = False
+        self._managed_keys.clear()
+        self._modified_keys.clear()
         self._update_dirty_indicator()
         GLib.timeout_add(300, self._load_after_reset)
 

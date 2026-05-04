@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+from pathlib import Path
 
 from hyprgui.settings_registry import SettingDef, SettingType
 
@@ -121,3 +123,54 @@ def format_value(sdef: SettingDef, value: object) -> str:
 
     # STRING, ENUM (without enum_values)
     return str(value)
+
+
+# -- Cursor theme helpers ---------------------------------------------------
+
+_CURSOR_DIRS = [
+    Path.home() / ".local" / "share" / "icons",
+    Path.home() / ".icons",
+    Path("/usr/share/icons"),
+]
+
+
+def find_cursor_themes() -> list[str]:
+    """Scan standard icon directories for installed cursor themes."""
+    themes: set[str] = set()
+    for base in _CURSOR_DIRS:
+        if not base.is_dir():
+            continue
+        for child in base.iterdir():
+            if not child.is_dir():
+                continue
+            # Hyprcursor themes have manifest.hl or manifest.toml
+            # XCursor themes have a cursors/ subdirectory
+            if ((child / "cursors").is_dir()
+                    or (child / "manifest.hl").exists()
+                    or (child / "manifest.toml").exists()):
+                themes.add(child.name)
+    return sorted(themes)
+
+
+def get_current_cursor() -> tuple[str, int]:
+    """Return (theme_name, size) from environment variables."""
+    theme = os.environ.get("HYPRCURSOR_THEME")
+    if not theme:
+        theme = os.environ.get("XCURSOR_THEME", "")
+    size_str = os.environ.get("HYPRCURSOR_SIZE")
+    if not size_str:
+        size_str = os.environ.get("XCURSOR_SIZE", "24")
+    try:
+        size = int(size_str)
+    except ValueError:
+        size = 24
+    return theme, size
+
+
+def set_cursor(theme: str, size: int) -> bool:
+    """Apply cursor theme and size via ``hyprctl setcursor``."""
+    try:
+        result = _run(["hyprctl", "setcursor", theme, str(size)])
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
