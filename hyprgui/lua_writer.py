@@ -161,21 +161,41 @@ def write_hyprgui_lua(
 
 
 def _monitor_call(name: str, spec: str) -> str:
-    """Format a monitor spec line into an ``hl.monitor({...})`` call.
+    """Format a Display-page monitor spec line into an ``hl.monitor({...})`` call.
 
-    Input shape: ``NAME,RESOLUTION,POSITION,SCALE`` (from the Display page).
-    Anything not parsed falls through to a comment + raw spec for visibility.
+    Input shape (produced by ``pages.display._build_monitor_spec``):
+        ``NAME,WxH@HZ,XxY,SCALE[,transform,N]``
+    The ``transform`` suffix is a ``key,value`` pair Hyprland appends to extend
+    a base spec; we map it onto ``HL.MonitorSpec.transform``. Unrecognised
+    suffix pairs are passed through to the resulting Lua table so anything
+    Hyprland accepts (e.g. ``vrr,1``, ``bitdepth,10``) round-trips.
     """
-    parts = spec.split(",")
-    # parts: NAME, RESOLUTION, POSITION, SCALE [, more...]
-    out = f'output = {lua_format.lua_string(name)}'
-    if len(parts) >= 2:
-        out += f', mode = {lua_format.lua_string(parts[1].strip())}'
-    if len(parts) >= 3:
-        out += f', position = {lua_format.lua_string(parts[2].strip())}'
-    if len(parts) >= 4:
-        out += f', scale = {lua_format.lua_string(parts[3].strip())}'
-    return f"hl.monitor({{ {out} }})"
+    parts = [p.strip() for p in spec.split(",")]
+    fields: list[str] = [f"output = {lua_format.lua_string(name)}"]
+    if len(parts) >= 2 and parts[1]:
+        fields.append(f"mode = {lua_format.lua_string(parts[1])}")
+    if len(parts) >= 3 and parts[2]:
+        fields.append(f"position = {lua_format.lua_string(parts[2])}")
+    if len(parts) >= 4 and parts[3]:
+        fields.append(f"scale = {lua_format.lua_string(parts[3])}")
+    # Optional key,value suffix pairs after the four positional fields.
+    i = 4
+    while i + 1 < len(parts):
+        k, v = parts[i], parts[i + 1]
+        if k and v:
+            # Numeric value -> bare number; otherwise quoted string.
+            literal = v if _looks_numeric(v) else lua_format.lua_string(v)
+            fields.append(f"{k} = {literal}")
+        i += 2
+    return f"hl.monitor({{ {', '.join(fields)} }})"
+
+
+def _looks_numeric(s: str) -> bool:
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
 
 
 def upsert_managed_monitors(updates: dict[str, str]) -> None:

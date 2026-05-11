@@ -150,6 +150,26 @@ log; summary here:
 
 (Items 6/7 unchecked because they require touching the user's running session.)
 
+### Display page bug (found during first real-world use, 2026-05-11)
+
+Symptom: dragging a monitor to a new position in the layout view briefly
+"worked" then snapped back, and nothing landed in ``.hyprgui-state.json``'s
+``monitors`` field. Root cause: ``pages/display.py`` was calling raw
+``hyprctl keyword monitor ...`` in four spots (``_apply_monitor``,
+``_apply_transform``, ``_apply_vrr``, plus the legacy spec build). Under
+Lua mode every call returned the "keyword can't work with non-legacy
+parsers" error, so the live preview never moved the monitor; the
+subsequent ``self._populate()`` re-queried Hyprland's unchanged state and
+redrew the original layout, masking the issue. Also: ``misc:vrr`` is gone
+from the schema — VRR is now per-monitor (``HL.MonitorSpec.vrr``).
+
+Fix: factor the writes through a mode switch — Lua mode emits
+``hl.monitor({ output = ..., mode/position/scale/transform/vrr = ... })``
+via ``hyprctl eval``; legacy mode keeps ``hyprctl keyword monitor``.
+``lua_writer._monitor_call`` now also round-trips the optional
+``,transform,N`` (and any other ``key,value`` suffix pairs) instead of
+silently dropping them. Covered by ``tests/test_display_monitor.py``.
+
 ### One newly-discovered subtlety: gradient read format
 
 ```

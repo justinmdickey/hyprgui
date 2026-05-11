@@ -89,6 +89,31 @@ def test_state_roundtrip_via_upsert_monitors(tmp_path):
     assert "DP-1" in out and "HDMI-A-1" in out
 
 
+def test_monitor_call_basic(tmp_path):
+    # The basic Display-page spec format.
+    out = lua_writer._monitor_call("DP-1", "DP-1,2560x1440@144.00,0x0,1.0")
+    assert out == 'hl.monitor({ output = "DP-1", mode = "2560x1440@144.00", position = "0x0", scale = "1.0" })'
+
+
+def test_monitor_call_with_transform_suffix(tmp_path):
+    out = lua_writer._monitor_call("DP-1", "DP-1,2560x1440@144.00,0x0,1.0,transform,1")
+    assert "transform = 1" in out
+    assert 'output = "DP-1"' in out
+    assert 'mode = "2560x1440@144.00"' in out
+
+
+def test_monitor_call_with_vrr_suffix(tmp_path):
+    # vrr,1 is a key,value pair Hyprland accepts as a spec suffix
+    out = lua_writer._monitor_call("DP-1", "DP-1,2560x1440@144.00,0x0,1.0,vrr,1")
+    assert "vrr = 1" in out
+
+
+def test_monitor_call_string_suffix_quoted(tmp_path):
+    # non-numeric suffix value gets quoted
+    out = lua_writer._monitor_call("DP-1", "DP-1,2560x1440@144.00,0x0,1.0,mirror,HDMI-A-1")
+    assert 'mirror = "HDMI-A-1"' in out
+
+
 def test_link_helpers(tmp_path):
     _redirect_hypr_dir(tmp_path)
     (tmp_path / "hyprland.lua").write_text('-- user config\nhl.config({ general = { gaps_in = 5 } })\n')
