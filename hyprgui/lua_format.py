@@ -31,8 +31,10 @@ def _is_gradient(lua_path: str) -> bool:
 def lua_path_for(sdef: SettingDef) -> str:
     """Return the dotted Lua config path for a registry setting.
 
-    e.g. ``decoration:shadow:range`` -> ``decoration.shadow.range``,
-    ``input:touchpad:tap-to-click`` -> ``input.touchpad.tap_to_click``.
+    e.g. ``decoration:shadow:range`` -> ``decoration.shadow.range``.
+    Hyphens in keys are normalised to underscores defensively, even though
+    the registry should use underscores (Hyprland's IPC rejects the hyphen
+    form for ``hyprctl getoption``).
     """
     if sdef.key in _LUA_PATH_OVERRIDES:
         return _LUA_PATH_OVERRIDES[sdef.key]

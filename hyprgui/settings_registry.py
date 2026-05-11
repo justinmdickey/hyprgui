@@ -478,7 +478,9 @@ SETTINGS: list[SettingDef] = [
         default=True,
     ),
     SettingDef(
-        key="input:touchpad:tap-to-click",
+        # Canonical key uses underscores (input.touchpad.tap_to_click in the
+        # Lua schema). The hyphen form is not accepted by `hyprctl getoption`.
+        key="input:touchpad:tap_to_click",
         label="Tap to Click",
         setting_type=SettingType.BOOL,
         page="input",
