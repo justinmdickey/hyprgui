@@ -182,6 +182,28 @@ followed by an optional angle. hyprgui currently exposes single-colour borders
 only, so we parse the first stop, swap AARRGGBB → RRGGBBAA. Keep the angle/extra
 stops for future multi-stop UI; round-trip them via the state sidecar.
 
+## Live full-registry sweep — DONE (2026-05-11, Hyprland 0.55.0)
+
+`tests/sweep_live_registry.py` ran the full apply→read→restore loop over all
+66 settings on the XPS. Final result: **66 pass · 0 fail**. Two reader bugs
+surfaced and were fixed along the way:
+
+- BOOLs return `{"bool": true|false}` in 0.55+, not `{"int": 0|1}`. The old
+  reader fell back to `SettingDef.default` for every BOOL — meaning in the
+  *actual app*, every switch displayed its hard-coded default rather than the
+  live value on open. Fixed in `parse_option_value` (accepts both shapes).
+- CssGap-typed ints (`general.gaps_in`/`gaps_out`/`float_gaps`, workspace
+  gaps) return `{"css": "T R B L"}` in 0.55+. Same fall-through bug. Fixed —
+  we take the first (top) component for the single-int UI.
+
+No write-path bugs found: every `hl.config({...})` snippet our generator
+emits is accepted and understood by Hyprland. Gradient vs plain-colour
+distinction, numeric vs string ENUMs, empty-string ENUM values (`accel_profile`
+`"Default"` ↔ `""`) — all confirmed working live.
+
+Next live test (not yet done): save → `hyprctl reload` → re-read, to confirm
+the `dofile("hyprgui.lua")` chain re-applies on reload.
+
 ## Work breakdown / sequencing
 
 1. **[done]** Branch, gather stub + example, audit registry keys, write this plan.
