@@ -122,27 +122,45 @@ Note `decoration.shadow.color` etc. are plain `string` colors, NOT gradients —
 - Optionally: a build-time test that asserts every registry key resolves to a
   `HL.ConfigKey` in the stub (skipped if stub absent). See `tests/test_lua_keys.py`.
 
-## Open questions to confirm with live `hyprctl eval` (Hyprland must be running)
+## Open questions — RESOLVED (2026-05-11, Hyprland 0.55.0)
 
-Run `tests/verify_lua_runtime.sh` on the XPS. It checks:
+All settled by `tests/verify_lua_runtime.sh` run on the XPS. Pasted output in commit
+log; summary here:
 
-1. Does `hyprctl eval 'hl.config({ decoration = { rounding = 0 } })'` change rounding,
-   and do **other** decoration options survive (merge vs replace)? (Justin's split
-   config strongly implies merge, but confirm via `eval` specifically.)
-2. Bare `hl.config(...)` via `eval` vs needing `hl.dispatch(...)` wrapping. (Config
-   examples don't wrap; dispatch examples do.)
-3. Nested-table form `decoration = { shadow = { range = 12 } }` vs bracket form
-   `decoration = { ["shadow.range"] = 12 }` — which does `hl.config` accept? (Example
-   file uses nested; Justin's config uses `["col.active_border"]` bracket form. Both
-   may work. Pick nested for our generator if it works.)
-4. `hyprctl getoption decoration:shadow:range` — does the colon-nested key resolve?
-   (vs `decoration:shadow_range`.) Test a few regrouped keys: shadow.*, blur.*,
-   touchpad.*, snap.*.
-5. Setting a gradient: `hl.config({ general = { col = { active_border = { colors = {"rgba(33ccffee)"}, angle = 45 } } } })`
-   then `getoption general:col.active_border` — what does it return? Still a decimal int?
-6. `hyprctl setcursor <theme> <size>` under Lua — still works?
-7. `dofile(...)` appended to `hyprland.lua` then `hyprctl reload` — does the re-`dofile`
-   re-apply our `hl.config`? (It should; reload re-runs the whole config from scratch.)
+1. **Merge vs replace** — `hl.config` **MERGES**. Setting `decoration.rounding=7` left
+   `decoration.blur.size=6` untouched. ⇒ push single-key updates via `eval` for live
+   preview; no need to send the whole config.
+2. **`hl.dispatch` wrapper** — NOT needed for `hl.config` calls via `eval`. Bare
+   `hyprctl eval 'hl.config({...})'` works (`ok`).
+3. **Nested vs bracket-dotted table form** — both accepted by `hl.config`. We use
+   nested (matches the example file).
+4. **`getoption` IPC key spelling** — always `section:sub:key` (colon all the way).
+   `decoration:shadow_range` returns "no such option". So registry keys stay as-is
+   for the read path.
+5. **Gradient (`*.col.*`) round-trip** — **breaking change**: `getoption` now returns
+   `{"option": ..., "gradient": "AARRGGBB Ndeg", "set": true}` for gradient keys,
+   NOT the old `{"int": <decimal>}`. ``hyprctl.parse_option_value`` for COLOR must
+   handle a `gradient` field (parse the first colour stop's `AARRGGBB`, convert to
+   our internal `RRGGBBAA`). Plain-colour keys (shadow.color etc.) need re-verifying
+   but likely still come back as `int`.
+6. **`setcursor` under Lua** — unverified live; deferred. Will smoke-test by running
+   the app.
+7. **`dofile`+`reload` re-apply** — unverified; the next phase (linking) will smoke
+   it. `reload` re-runs the whole `hyprland.lua` from scratch, so it must.
+
+(Items 6/7 unchecked because they require touching the user's running session.)
+
+### One newly-discovered subtlety: gradient read format
+
+```
+$ hyprctl -j getoption general:col.active_border
+{"option": "general:col.active_border", "gradient": "ee33ccff 45deg", "set": true}
+```
+
+Format is `"<AARRGGBB1> [<AARRGGBB2>...] [Ndeg]"` — space-separated colour stops
+followed by an optional angle. hyprgui currently exposes single-colour borders
+only, so we parse the first stop, swap AARRGGBB → RRGGBBAA. Keep the angle/extra
+stops for future multi-stop UI; round-trip them via the state sidecar.
 
 ## Work breakdown / sequencing
 

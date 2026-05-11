@@ -713,8 +713,9 @@ class HyprguiWindow(Adw.ApplicationWindow):
             return
         self._modified_keys.add(sdef.key)
         self._update_dirty_indicator()
-        formatted = hyprctl.format_value(sdef, value)
-        hyprctl.set_keyword(sdef.key, formatted)
+        # Mode-aware: `hyprctl keyword` under hyprlang, `hyprctl eval 'hl.config{}'`
+        # under the 0.55+ Lua parser (which rejects `keyword`).
+        hyprctl.apply_setting(sdef, value)
 
     # -- Save ---------------------------------------------------------------
 
