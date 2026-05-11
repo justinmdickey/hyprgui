@@ -28,10 +28,10 @@ STUB_PATH = Path("/usr/share/hypr/stubs/hl.meta.lua")
 KEY_OVERRIDES: dict[str, str] = {}
 
 # Registry keys we knowingly haven't fixed yet — xfail, don't hard-fail.
-KNOWN_BAD = {
-    "dwindle:pseudotile",   # not a config key in the Lua schema; pre-existing registry bug
-    "misc:vfr",             # moved to debug.vfr in newer Hyprland
-}
+# (Empty: ``misc:vfr`` was renamed to ``debug:vfr`` and ``dwindle:pseudotile`` was
+#  removed in commit X. Repopulate here only if a new registry entry needs a
+#  temporary waiver while a fix is in flight.)
+KNOWN_BAD: set[str] = set()
 
 
 def _lua_key(registry_key: str) -> str:

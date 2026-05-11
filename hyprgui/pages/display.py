@@ -12,7 +12,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gtk  # noqa: E402
 
-from hyprgui.config_manager import upsert_managed_monitors  # noqa: E402
+from hyprgui.persistence import upsert_monitors as upsert_managed_monitors  # noqa: E402
 from hyprgui.pages.base import BasePage  # noqa: E402
 from hyprgui.widgets.monitor_layout import MonitorLayoutWidget  # noqa: E402
 

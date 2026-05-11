@@ -12,7 +12,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gio, Gtk
 
-from hyprgui.config_manager import append_source_line, is_source_line_present
+from hyprgui.persistence import is_linked, link, link_prompt_text
 
 
 class HyprguiApp(Adw.Application):
@@ -37,8 +37,9 @@ class HyprguiApp(Adw.Application):
             win.add_toast(toast)
             return
 
-        # First-run: offer to add source line
-        if not is_source_line_present():
+        # First-run: offer to link our managed file from the user's main config.
+        # Mode-aware: Lua → dofile into hyprland.lua; legacy → source into hyprland.conf.
+        if not is_linked():
             self._show_first_run_dialog(win)
 
     def _show_missing_hyprctl_dialog(self) -> None:
@@ -62,18 +63,10 @@ class HyprguiApp(Adw.Application):
         dialog.present(win)
 
     def _show_first_run_dialog(self, parent: Gtk.Window) -> None:
-        dialog = Adw.AlertDialog(
-            heading="First-Time Setup",
-            body=(
-                "Hyprgui needs to add a source line to your hyprland.conf "
-                "so saved settings persist across restarts.\n\n"
-                "This will append:\n"
-                "  source = ~/.config/hypr/hyprgui.conf\n\n"
-                "You can remove it at any time."
-            ),
-        )
+        heading, body = link_prompt_text()
+        dialog = Adw.AlertDialog(heading=heading, body=body)
         dialog.add_response("cancel", "Not Now")
-        dialog.add_response("add", "Add Source Line")
+        dialog.add_response("add", "Link")
         dialog.set_response_appearance("add", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("add")
         dialog.set_close_response("cancel")
@@ -84,15 +77,16 @@ class HyprguiApp(Adw.Application):
     def _on_first_run_response(self, _dialog, response: str, parent) -> None:
         if response == "add":
             try:
-                append_source_line()
+                link()
                 from hyprgui.hyprctl import reload_config
                 reload_config()
-                toast = Adw.Toast(title="Source line added to hyprland.conf")
-                parent.add_toast(toast)
+                from hyprgui.config_mode import HYPRLAND_CONF, HYPRLAND_LUA, detect_mode, ConfigMode
+                target = HYPRLAND_LUA.name if detect_mode() is ConfigMode.LUA else HYPRLAND_CONF.name
+                parent.add_toast(Adw.Toast(title=f"Hyprgui linked into {target}"))
             except OSError as e:
                 err = Adw.AlertDialog(
                     heading="Error",
-                    body=f"Could not modify hyprland.conf:\n{e}",
+                    body=f"Could not modify your Hyprland config:\n{e}",
                 )
                 err.add_response("ok", "OK")
                 err.present(parent)

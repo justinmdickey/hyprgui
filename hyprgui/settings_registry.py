@@ -517,14 +517,10 @@ SETTINGS: list[SettingDef] = [
     ),
 
     # ── Layouts: Dwindle ──────────────────────────────────────────────
-    SettingDef(
-        key="dwindle:pseudotile",
-        label="Pseudotile",
-        setting_type=SettingType.BOOL,
-        page="layouts",
-        group="Dwindle",
-        default=False,
-    ),
+    # NOTE: ``dwindle:pseudotile`` used to live here, but it isn't a config
+    # option — it's a per-window state toggled by the ``pseudo`` dispatcher.
+    # ``hyprctl getoption dwindle:pseudotile`` returns "no such option" on
+    # 0.55+ (and the live-preview write was a no-op even before). Removed.
     SettingDef(
         key="dwindle:force_split",
         label="Force Split Direction",
@@ -632,7 +628,10 @@ SETTINGS: list[SettingDef] = [
 
     # ── Miscellaneous: Performance ────────────────────────────────────
     SettingDef(
-        key="misc:vfr",
+        # Moved from `misc:vfr` to `debug:vfr` in Hyprland's schema; the new
+        # canonical Lua key is `debug.vfr`. `hyprctl getoption misc:vfr` returns
+        # "no such option" on 0.55+.
+        key="debug:vfr",
         label="Variable Frame Rate",
         setting_type=SettingType.BOOL,
         page="misc",
