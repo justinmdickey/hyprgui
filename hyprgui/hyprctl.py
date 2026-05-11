@@ -85,11 +85,30 @@ def parse_option_value(sdef: SettingDef, data: dict | None) -> object:
 
     try:
         if sdef.setting_type == SettingType.BOOL:
-            # hyprctl returns {"int": 0/1} for bools
-            return bool(data.get("int", int(sdef.default)))
+            # 0.55+ returns {"bool": true|false}; older Hyprland used {"int": 0|1}.
+            # Accept both so the reader works across versions.
+            if "bool" in data:
+                return bool(data["bool"])
+            if "int" in data:
+                return bool(data["int"])
+            return bool(sdef.default)
 
         if sdef.setting_type == SettingType.INT:
-            return int(data.get("int", sdef.default))
+            # CssGap-shaped fields (general.gaps_in/out/float_gaps, workspace gaps,
+            # ...) return {"css": "top right bottom left"} in 0.55+. Treat the
+            # shorthand as a single number when all four are equal; otherwise pick
+            # the first (the UI only exposes a single int).
+            css = data.get("css")
+            if isinstance(css, str) and css.strip():
+                parts = css.split()
+                if parts:
+                    try:
+                        return int(parts[0])
+                    except ValueError:
+                        pass
+            if "int" in data:
+                return int(data["int"])
+            return int(sdef.default if sdef.default is not None else 0)
 
         if sdef.setting_type == SettingType.FLOAT:
             return float(data.get("float", sdef.default))

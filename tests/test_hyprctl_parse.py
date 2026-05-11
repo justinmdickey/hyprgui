@@ -36,6 +36,7 @@ def test_parse_plain_color_still_int_field():
 
 
 def test_parse_int_bool_float_unchanged():
+    # legacy "int": 0/1 form for bools
     assert hyprctl.parse_option_value(
         _sdef("decoration:rounding", SettingType.INT, default=0),
         {"option": "decoration:rounding", "int": 18, "set": True},
@@ -48,6 +49,41 @@ def test_parse_int_bool_float_unchanged():
         _sdef("master:mfact", SettingType.FLOAT, default=0.5),
         {"float": 0.55},
     ) == 0.55
+
+
+def test_parse_bool_new_field_in_0_55():
+    """0.55+ returns BOOLs as {"bool": true|false}, not {"int": 0|1}.
+
+    Live-sweep regression: every BOOL was failing because we fell back to
+    the SettingDef.default. Now we accept the new field shape.
+    """
+    s = _sdef("decoration:blur:enabled", SettingType.BOOL, default=True)
+    # Hyprland says False; we must return False (not the default True).
+    assert hyprctl.parse_option_value(
+        s, {"option": "decoration:blur:enabled", "bool": False, "set": True}
+    ) is False
+    # And the inverse.
+    assert hyprctl.parse_option_value(
+        _sdef("misc:disable_hyprland_logo", SettingType.BOOL, default=False),
+        {"option": "misc:disable_hyprland_logo", "bool": True, "set": True},
+    ) is True
+
+
+def test_parse_int_css_field_for_gaps():
+    """0.55+ returns HL.CssGap fields as {"css": "T R B L"}.
+
+    Live-sweep regression: general:gaps_in / gaps_out returned the default
+    instead of the actual value. Take the first component (top); the UI
+    exposes a single int, not a 4-tuple.
+    """
+    s = _sdef("general:gaps_in", SettingType.INT, default=5)
+    assert hyprctl.parse_option_value(
+        s, {"option": "general:gaps_in", "css": "6 6 6 6", "set": True}
+    ) == 6
+    # Non-symmetric (TRBL) — the first component wins for the single-int UI.
+    assert hyprctl.parse_option_value(
+        s, {"option": "general:gaps_in", "css": "10 20 30 40", "set": True}
+    ) == 10
 
 
 def _run_all() -> int:
