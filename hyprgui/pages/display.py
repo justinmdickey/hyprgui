@@ -12,7 +12,10 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, Gtk  # noqa: E402
 
-from hyprgui.config_manager import upsert_managed_monitors  # noqa: E402
+from hyprgui import lua_format  # noqa: E402
+from hyprgui.config_mode import ConfigMode, detect_mode  # noqa: E402
+from hyprgui.hyprctl import eval_lua  # noqa: E402
+from hyprgui.persistence import upsert_monitors as upsert_managed_monitors  # noqa: E402
 from hyprgui.pages.base import BasePage  # noqa: E402
 from hyprgui.widgets.monitor_layout import MonitorLayoutWidget  # noqa: E402
 
@@ -44,25 +47,62 @@ def _get_monitors() -> list[dict]:
         return []
 
 
-def _apply_monitor(name: str, width: int, height: int, refresh: float,
-                   x: int, y: int, scale: float) -> bool:
-    """Apply resolution, position, and scale via ``hyprctl keyword monitor``."""
-    spec = f"{name},{width}x{height}@{refresh:.2f},{x}x{y},{scale}"
+def _keyword_monitor(spec: str) -> bool:
+    """Legacy path: ``hyprctl keyword monitor <spec>``. Fails under the Lua parser."""
     try:
         result = subprocess.run(
             ["hyprctl", "keyword", "monitor", spec],
-            capture_output=True,
-            text=True,
-            timeout=5,
+            capture_output=True, text=True, timeout=5,
         )
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
 
 
+def _hl_monitor_call(fields: dict[str, object]) -> str:
+    """Render an ``hl.monitor({...})`` call from a field dict, for Lua-mode
+    *live preview* (``hyprctl eval``).
+
+    Persistence is separate: the saved spec string goes through
+    ``persistence.upsert_monitors`` → ``lua_writer._monitor_call``, which
+    builds the equivalent call when regenerating ``hyprgui.lua``.
+
+    ``fields`` keys map to ``HL.MonitorSpec`` fields; values are bare Python
+    primitives, formatted as appropriate Lua literals.
+    """
+    pairs = []
+    for k, v in fields.items():
+        if isinstance(v, bool):
+            pairs.append(f"{k} = {'true' if v else 'false'}")
+        elif isinstance(v, (int, float)) and not isinstance(v, bool):
+            pairs.append(f"{k} = {v}")
+        else:
+            pairs.append(f"{k} = {lua_format.lua_string(str(v))}")
+    return f"hl.monitor({{ {', '.join(pairs)} }})"
+
+
+def _apply_monitor(name: str, width: int, height: int, refresh: float,
+                   x: int, y: int, scale: float) -> bool:
+    """Apply resolution, position, and scale for live preview, mode-aware."""
+    if detect_mode() is ConfigMode.LUA:
+        return eval_lua(_hl_monitor_call({
+            "output": name,
+            "mode": f"{width}x{height}@{refresh:.2f}",
+            "position": f"{x}x{y}",
+            "scale": str(scale),
+        }))
+    spec = f"{name},{width}x{height}@{refresh:.2f},{x}x{y},{scale}"
+    return _keyword_monitor(spec)
+
+
 def _build_monitor_spec(name: str, width: int, height: int, refresh: float,
                         x: int, y: int, scale: float, transform: int = 0) -> str:
-    """Build a Hyprland-config-format monitor spec string (without the leading 'monitor =')."""
+    """Build a Hyprland-config-format monitor spec string (without the leading 'monitor =').
+
+    Format: ``NAME,WIDTHxHEIGHT@HZ,XxY,SCALE[,transform,N]`` — stable across
+    both modes. ``lua_writer._monitor_call`` parses this back when emitting
+    ``hl.monitor(...)`` into hyprgui.lua.
+    """
     spec = f"{name},{width}x{height}@{refresh:.2f},{x}x{y},{scale}"
     if transform:
         spec += f",transform,{transform}"
@@ -70,33 +110,24 @@ def _build_monitor_spec(name: str, width: int, height: int, refresh: float,
 
 
 def _apply_transform(name: str, transform: int) -> bool:
-    """Apply a transform value via ``hyprctl keyword monitor``."""
-    spec = f"{name},transform,{transform}"
-    try:
-        result = subprocess.run(
-            ["hyprctl", "keyword", "monitor", spec],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+    """Apply a transform value, mode-aware."""
+    if detect_mode() is ConfigMode.LUA:
+        return eval_lua(_hl_monitor_call({"output": name, "transform": int(transform)}))
+    return _keyword_monitor(f"{name},transform,{transform}")
 
 
 def _apply_vrr(name: str, enabled: bool) -> bool:
-    """Toggle VRR (adaptive sync) for a monitor."""
-    val = "1" if enabled else "0"
-    try:
-        result = subprocess.run(
-            ["hyprctl", "keyword", "misc:vrr", val],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
+    """Toggle VRR (adaptive sync) for a monitor.
+
+    Note: pre-0.55 hyprgui set the global ``misc:vrr`` keyword regardless of
+    which monitor row was toggled — that's a per-monitor field in the Lua
+    schema (``MonitorSpec.vrr``), and the global key is gone. We now use the
+    per-monitor form in both modes.
+    """
+    val = 1 if enabled else 0
+    if detect_mode() is ConfigMode.LUA:
+        return eval_lua(_hl_monitor_call({"output": name, "vrr": val}))
+    return _keyword_monitor(f"{name},vrr,{val}")
 
 
 def _parse_mode(mode_str: str) -> tuple[int, int, float] | None:

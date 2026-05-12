@@ -1,12 +1,22 @@
-"""Read/write Hyprland settings via hyprctl subprocess calls."""
+"""Read/write Hyprland settings via hyprctl subprocess calls.
+
+Read path (``getoption``) is identical in both legacy hyprlang and the new Lua
+config (Hyprland 0.55+). Write path differs: legacy mode uses ``hyprctl keyword``,
+Lua mode uses ``hyprctl eval 'hl.config({...})'`` because the Lua parser rejects
+``keyword``. :func:`apply_setting` picks the right path based on
+:func:`~hyprgui.config_mode.detect_mode`.
+"""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
+from hyprgui import lua_format
+from hyprgui.config_mode import ConfigMode, detect_mode
 from hyprgui.settings_registry import SettingDef, SettingType
 
 
@@ -35,12 +45,37 @@ def getoption(key: str) -> dict | None:
 
 
 def set_keyword(key: str, value: str) -> bool:
-    """Apply a setting immediately via `hyprctl keyword <key> <value>`."""
+    """Apply a setting via legacy ``hyprctl keyword`` (hyprlang mode only).
+
+    Under the Lua parser this fails with "keyword can't work with non-legacy
+    parsers. Use eval." — callers should prefer :func:`apply_setting`.
+    """
     try:
         result = _run(["hyprctl", "keyword", key, value])
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
+
+
+def eval_lua(lua: str) -> bool:
+    """Run a Lua snippet via ``hyprctl eval`` (Lua mode write path)."""
+    try:
+        result = _run(["hyprctl", "eval", lua])
+        return result.returncode == 0 and "ok" in result.stdout.lower()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+
+
+def apply_setting(sdef: SettingDef, value: object) -> bool:
+    """Push a single setting to Hyprland for instant preview, mode-aware.
+
+    Hyprlang mode → ``hyprctl keyword``. Lua mode → ``hyprctl eval
+    'hl.config({...})'`` with a one-key nested table. ``hl.config`` merges,
+    so this leaves all other settings alone (verified on 0.55.0).
+    """
+    if detect_mode() is ConfigMode.LUA:
+        return eval_lua(lua_format.eval_snippet_for(sdef, value))
+    return set_keyword(sdef.key, format_value(sdef, value))
 
 
 def parse_option_value(sdef: SettingDef, data: dict | None) -> object:
@@ -50,18 +85,49 @@ def parse_option_value(sdef: SettingDef, data: dict | None) -> object:
 
     try:
         if sdef.setting_type == SettingType.BOOL:
-            # hyprctl returns {"int": 0/1} for bools
-            return bool(data.get("int", int(sdef.default)))
+            # 0.55+ returns {"bool": true|false}; older Hyprland used {"int": 0|1}.
+            # Accept both so the reader works across versions.
+            if "bool" in data:
+                return bool(data["bool"])
+            if "int" in data:
+                return bool(data["int"])
+            return bool(sdef.default)
 
         if sdef.setting_type == SettingType.INT:
-            return int(data.get("int", sdef.default))
+            # CssGap-shaped fields (general.gaps_in/out/float_gaps, workspace gaps,
+            # ...) return {"css": "top right bottom left"} in 0.55+. Treat the
+            # shorthand as a single number when all four are equal; otherwise pick
+            # the first (the UI only exposes a single int).
+            css = data.get("css")
+            if isinstance(css, str) and css.strip():
+                parts = css.split()
+                if parts:
+                    try:
+                        return int(parts[0])
+                    except ValueError:
+                        pass
+            if "int" in data:
+                return int(data["int"])
+            return int(sdef.default if sdef.default is not None else 0)
 
         if sdef.setting_type == SettingType.FLOAT:
             return float(data.get("float", sdef.default))
 
         if sdef.setting_type == SettingType.COLOR:
-            # hyprctl returns color as a decimal int in "int" field
-            # Convert to RRGGBBAA hex string
+            # Two response shapes:
+            #  * plain color keys (decoration.shadow.color, misc.background_color, ...)
+            #    -> {"int": <decimal AARRGGBB>}  (same as pre-0.55)
+            #  * gradient keys (general.col.*, group.groupbar.col.*, ...) under the
+            #    Lua parser -> {"gradient": "AARRGGBB [AARRGGBB...] [Ndeg]"} (new in 0.55)
+            grad = data.get("gradient")
+            if isinstance(grad, str) and grad.strip():
+                # Take the first colour stop; ignore further stops + angle for now.
+                # (hyprgui's UI only exposes single-colour borders.)
+                first = grad.strip().split()[0]
+                # 8-hex-digit AARRGGBB → our internal RRGGBBAA
+                if re.fullmatch(r"[0-9a-fA-F]{8}", first):
+                    aa, rr, gg, bb = first[0:2], first[2:4], first[4:6], first[6:8]
+                    return f"{rr}{gg}{bb}{aa}".lower()
             raw = data.get("int")
             if raw is not None:
                 # The int is AARRGGBB as a 32-bit value

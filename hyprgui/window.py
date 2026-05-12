@@ -74,9 +74,9 @@ class HyprguiWindow(Adw.ApplicationWindow):
         return bool(self._modified_keys)
 
     def _seed_managed_keys(self) -> None:
-        """Load the set of keys previously saved in hyprgui.conf."""
-        from hyprgui.config_manager import parse_hyprgui_conf
-        self._managed_keys = parse_hyprgui_conf()
+        """Load the set of keys previously saved by hyprgui (mode-aware)."""
+        from hyprgui.persistence import managed_keys
+        self._managed_keys = managed_keys()
 
     # -- UI construction ----------------------------------------------------
 
@@ -713,32 +713,36 @@ class HyprguiWindow(Adw.ApplicationWindow):
             return
         self._modified_keys.add(sdef.key)
         self._update_dirty_indicator()
-        formatted = hyprctl.format_value(sdef, value)
-        hyprctl.set_keyword(sdef.key, formatted)
+        # Mode-aware: `hyprctl keyword` under hyprlang, `hyprctl eval 'hl.config{}'`
+        # under the 0.55+ Lua parser (which rejects `keyword`).
+        hyprctl.apply_setting(sdef, value)
 
     # -- Save ---------------------------------------------------------------
 
     def _on_save_clicked(self, _button: Gtk.Button) -> None:
-        from hyprgui.config_manager import write_hyprgui_conf
+        from hyprgui.config_mode import managed_file
+        from hyprgui.persistence import write
         all_managed = self._managed_keys | self._modified_keys
         cursor_theme = getattr(self, "_cursor_theme", "")
         cursor_size = getattr(self, "_cursor_size", 0)
-        write_hyprgui_conf(
+        write(
             self._values,
-            managed_keys=all_managed,
+            managed=all_managed,
             cursor_theme=cursor_theme if "_cursor_theme" in all_managed else "",
             cursor_size=cursor_size if "_cursor_size" in all_managed else 0,
         )
         self._managed_keys = all_managed
         self._modified_keys.clear()
         self._update_dirty_indicator()
-        toast = Adw.Toast(title="Settings saved to hyprgui.conf")
+        toast = Adw.Toast(title=f"Settings saved to {managed_file().name}")
         self.add_toast(toast)
 
     def _on_reset_clicked(self, _button: Gtk.Button) -> None:
+        from hyprgui.config_mode import managed_file
         dialog = Adw.AlertDialog(
             heading="Reset All Settings?",
-            body="This will clear hyprgui.conf and reload Hyprland so your own config takes effect.",
+            body=f"This will clear {managed_file().name} and reload Hyprland "
+                 "so your own config takes effect.",
         )
         dialog.add_response("cancel", "Cancel")
         dialog.add_response("reset", "Reset")
@@ -751,8 +755,8 @@ class HyprguiWindow(Adw.ApplicationWindow):
     def _on_reset_response(self, dialog, response: str) -> None:
         if response != "reset":
             return
-        from hyprgui.config_manager import reset_hyprgui_conf
-        reset_hyprgui_conf()
+        from hyprgui.persistence import reset_managed_file
+        reset_managed_file()
         hyprctl.reload_config()
         self._managed_keys.clear()
         self._modified_keys.clear()
