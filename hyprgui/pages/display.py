@@ -60,9 +60,13 @@ def _keyword_monitor(spec: str) -> bool:
 
 
 def _hl_monitor_call(fields: dict[str, object]) -> str:
-    """Render an ``hl.monitor({...})`` call from a field dict.
+    """Render an ``hl.monitor({...})`` call from a field dict, for Lua-mode
+    *live preview* (``hyprctl eval``).
 
-    Used for Lua-mode live preview AND for the persisted hyprgui.lua.
+    Persistence is separate: the saved spec string goes through
+    ``persistence.upsert_monitors`` → ``lua_writer._monitor_call``, which
+    builds the equivalent call when regenerating ``hyprgui.lua``.
+
     ``fields`` keys map to ``HL.MonitorSpec`` fields; values are bare Python
     primitives, formatted as appropriate Lua literals.
     """

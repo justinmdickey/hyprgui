@@ -12,6 +12,7 @@ recover "which keys hyprgui manages" without parsing Lua back.
 from __future__ import annotations
 
 import json
+import re
 
 from hyprgui import lua_format
 from hyprgui.config_mode import HYPR_DIR, HYPRGUI_LUA, HYPRLAND_LUA
@@ -19,11 +20,20 @@ from hyprgui.settings_registry import SETTINGS, SettingDef, SettingType
 
 STATE_FILE = HYPR_DIR / ".hyprgui-state.json"
 
-# How we link our file from the user's hyprland.lua. ``dofile`` with an absolute
-# path is robust regardless of Lua's package.path, and ``hyprctl reload`` will
-# re-run hyprland.lua (which re-runs us) on every save.
-_LINK_LINE = f'dofile(os.getenv("HOME") .. "/.config/hypr/hyprgui.lua")'
+# The line we append to the user's hyprland.lua. NOTE: this is *Lua* source —
+# the ``os.getenv("HOME")`` is evaluated by Lua at config-load time, not by
+# Python. ``dofile`` with an absolute path is robust regardless of Lua's
+# package.path, and ``hyprctl reload`` re-runs hyprland.lua (hence re-runs us)
+# on every save.
+_LINK_LINE = 'dofile(os.getenv("HOME") .. "/.config/hypr/hyprgui.lua")'
 _LINK_BANNER = "-- Added by Hyprgui — re-applies its managed settings"
+
+# Matches a non-commented Lua statement that loads our file via dofile/require,
+# tolerating hand-edited variants (different quote style, absolute path, etc).
+_LINK_RE = re.compile(
+    r"""^\s*(?:dofile|require)\s*\(.*hyprgui\.lua.*\)|^\s*require\s*\(\s*["']hyprgui["']\s*\)""",
+    re.IGNORECASE,
+)
 
 
 # -- file existence / linking ----------------------------------------------
@@ -32,12 +42,26 @@ def hyprgui_lua_exists() -> bool:
     return HYPRGUI_LUA.exists()
 
 
+def _strip_lua_line_comment(line: str) -> str:
+    """Drop a trailing ``-- ...`` comment. Doesn't handle ``--[[ ]]`` blocks or
+    ``--`` inside strings — good enough for detecting our own appended line."""
+    idx = line.find("--")
+    return line if idx == -1 else line[:idx]
+
+
 def is_linked() -> bool:
-    """True if ``hyprland.lua`` already ``dofile``s our file."""
+    """True if ``hyprland.lua`` has a non-commented dofile/require of our file.
+
+    Substring matching would false-positive on a commented-out line or a note
+    that merely mentions ``hyprgui.lua`` — and a false positive makes first-run
+    skip linking while Hyprland never actually loads our config.
+    """
     if not HYPRLAND_LUA.exists():
         return False
-    text = HYPRLAND_LUA.read_text()
-    return _LINK_LINE in text or "hyprgui.lua" in text  # tolerate hand-edited variants
+    for raw_line in HYPRLAND_LUA.read_text().splitlines():
+        if _LINK_RE.match(_strip_lua_line_comment(raw_line)):
+            return True
+    return False
 
 
 def create_empty_lua() -> None:
